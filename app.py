@@ -16,20 +16,7 @@ from io import BytesIO
 from bs4 import BeautifulSoup
 import uvicorn
 
-SAFE_FUNCTIONS = {
-    "install_and_run": install_and_run,
-    "format_markdown": format_markdown,
-    "count_weekdays": count_weekdays,
-    "sort_contacts": sort_contacts,
-    "extract_log_lines": extract_log_lines,
-    "extract_email": extract_email,
-    "calculate_sales": calculate_sales,
-    "fetch_api_data": fetch_api_data,
-    "clone_and_commit": clone_and_commit,
-    "run_sql": run_sql,
-    "scrape_website": scrape_website,
-    "convert_md_to_html": convert_md_to_html
-}
+
 app = FastAPI()
 DATA_DIR = "/data"
 AIPROXY_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6IjIyZjIwMDEzMTFAZHMuc3R1ZHkuaWl0bS5hYy5pbiJ9.zREmyIWRLAyv0sgEc-zpRNhoviGVMeo--fiLqQ94m7w"
@@ -237,6 +224,21 @@ def convert_md_to_html():
     with open("/data/docs/index.html", "w") as f:
         f.write(html_content)
     return {"status": "success"}
+
+SAFE_FUNCTIONS = {
+    "install_and_run": install_and_run,
+    "format_markdown": format_markdown,
+    "count_weekdays": count_weekdays,
+    "sort_contacts": sort_contacts,
+    "extract_log_lines": extract_log_lines,
+    "extract_email": extract_email,
+    "calculate_sales": calculate_sales,
+    "fetch_api_data": fetch_api_data,
+    "clone_and_commit": clone_and_commit,
+    "run_sql": run_sql,
+    "scrape_website": scrape_website,
+    "convert_md_to_html": convert_md_to_html
+}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
