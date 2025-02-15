@@ -9,6 +9,7 @@ import markdown
 import duckdb
 from datetime import datetime
 from openai import OpenAI
+import openai
 from PIL import Image
 import pytesseract
 import pandas as pd
@@ -19,19 +20,30 @@ import re
 
 
 app = FastAPI()
-DATA_DIR = "./data"
+DATA_DIR = "/data"
 AIPROXY_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6IjIyZjIwMDEzMTFAZHMuc3R1ZHkuaWl0bS5hYy5pbiJ9.zREmyIWRLAyv0sgEc-zpRNhoviGVMeo--fiLqQ94m7w"
 
 client = OpenAI(api_key=AIPROXY_TOKEN, base_url="https://aiproxy.sanand.workers.dev/openai/v1/")
 
 def secure_path(path):
-    abs_path = os.path.abspath(path)  
-    data_dir = os.path.abspath(DATA_DIR)  
-
-    if not abs_path.startswith(data_dir): 
-        raise HTTPException(status_code=403, detail=f"Access denied: {abs_path} is outside {data_dir}")
+    # Define your project data directory (the allowed base directory)
+    project_base_path = os.getenv("PROJECT_BASE_PATH", "/Users/pranjalagrawal/Documents/TDS_Project_1/Project-1/data")
     
-    return abs_path  
+    # If the path starts with "/data/", map it to the actual project data directory
+    if path.startswith("/data/"):
+        # Remove the leading '/data/' and join with the project base path
+        path = os.path.join(project_base_path, path[len("/data/"):])
+    
+    abs_path = os.path.abspath(path)
+    print(f"Attempting to secure path: {abs_path}")  # Debug print
+
+    if not abs_path.startswith(project_base_path):
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Access denied: {abs_path} is outside {project_base_path}"
+        )
+    
+    return abs_path
 
 
 def parse_task_with_llm(task_description):
@@ -96,16 +108,18 @@ def execute_task(task):
         if "action" in task_data:
             action = task_data.pop("action")  # Extract action
             
-            # Ensure functions with no parameters are called properly
+            # Build the step string using only the values, not the keys
             if task_data:
-                step = f"{action}({', '.join(f'{k}={v}' for k, v in task_data.items())})"
+                # Use only the values (in quotes) to form positional arguments
+                step = f'{action}(' + ", ".join('"' + str(v) + '"' for v in task_data.values()) + ')'
             else:
-                step = f"{action}()"  # Call without parameters if no arguments exist
-                
-            task_data["steps"] = [step]  
-
-        return safe_execute_task(task_data)  
-
+                step = f"{action}()"
+            
+            print("Generated step:", step)  # For debugging
+            task_data["steps"] = [step]
+    
+        return safe_execute_task(task_data)
+    
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent Error: {str(e)}")
     
@@ -131,15 +145,12 @@ def install_and_run(email: str):
 
 @app.post("/format-md")
 def format_file(file: str = "/data/format.md", *args, **kwargs):
-    file = os.path.abspath(file)  # Ensure absolute path
-    secure_path(file)  # ✅ Check security
-
+    # Instead of converting to abspath first, let secure_path handle it:
+    file = secure_path(file)  # This returns the correct mapped absolute path
     if not os.path.exists(file):
         raise HTTPException(status_code=404, detail=f"File not found: {file}")
-
-    # ✅ Run Prettier formatting
+    # Run Prettier formatting
     subprocess.run(["npx", "prettier@3.4.2", "--write", file], check=True)
-
     return {"status": "success", "formatted_file": file}
 
 @app.post("/count-weekdays")
