@@ -15,18 +15,24 @@ import pandas as pd
 from io import BytesIO
 from bs4 import BeautifulSoup
 import uvicorn
+import re
 
 
 app = FastAPI()
-DATA_DIR = "/data"
+DATA_DIR = "./data"
 AIPROXY_TOKEN = "eyJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6IjIyZjIwMDEzMTFAZHMuc3R1ZHkuaWl0bS5hYy5pbiJ9.zREmyIWRLAyv0sgEc-zpRNhoviGVMeo--fiLqQ94m7w"
 
-client = OpenAI(api_key=AIPROXY_TOKEN, base_url="https://aiproxy.sanand.workers.dev/openai/")
+client = OpenAI(api_key=AIPROXY_TOKEN, base_url="https://aiproxy.sanand.workers.dev/openai/v1/")
 
 def secure_path(path):
-    if not path.startswith(DATA_DIR):
-        raise HTTPException(status_code=403, detail="Access denied outside /data directory")
-    return path
+    abs_path = os.path.abspath(path)  
+    data_dir = os.path.abspath(DATA_DIR)  
+
+    if not abs_path.startswith(data_dir): 
+        raise HTTPException(status_code=403, detail=f"Access denied: {abs_path} is outside {data_dir}")
+    
+    return abs_path  
+
 
 def parse_task_with_llm(task_description):
     prompt = f"""
@@ -54,9 +60,11 @@ def parse_task_with_llm(task_description):
                   {"role": "user", "content": prompt}],
         temperature=0
     )
-
+    print("LLM Response:", response)
+    content = response.choices[0].message.content  # ✅ Get the response content
+    content = re.sub(r"^```json\n(.*?)\n```$", r"\1", content, flags=re.DOTALL).strip()
     try:
-        structured_data = json.loads(response.choices[0].message.content.strip())
+        structured_data = json.loads(content)
         return structured_data
     except json.JSONDecodeError as e:
         raise HTTPException(status_code=500, detail=f"Invalid LLM response: {str(e)}")
@@ -82,11 +90,25 @@ def safe_execute_task(task_steps):
 
 def execute_task(task):
     try:
-        task_steps = parse_task_with_llm(task)
-        return safe_execute_task(task_steps)  
+        task_data = parse_task_with_llm(task)
+        
+        # Convert "action" into a single-step execution if needed
+        if "action" in task_data:
+            action = task_data.pop("action")  # Extract action
+            
+            # Ensure functions with no parameters are called properly
+            if task_data:
+                step = f"{action}({', '.join(f'{k}={v}' for k, v in task_data.items())})"
+            else:
+                step = f"{action}()"  # Call without parameters if no arguments exist
+                
+            task_data["steps"] = [step]  
+
+        return safe_execute_task(task_data)  
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent Error: {str(e)}")
-
+    
 @app.post("/run")
 def run_task(task: str):
     if not task:
@@ -108,9 +130,17 @@ def install_and_run(email: str):
     return {"status": "success", "output": result.stdout}
 
 @app.post("/format-md")
-def format_markdown():
-    subprocess.run(["npx", "prettier@3.4.2", "--write", "/data/format.md"], check=True)
-    return {"status": "success"}
+def format_file(file: str = "/data/format.md", *args, **kwargs):
+    file = os.path.abspath(file)  # Ensure absolute path
+    secure_path(file)  # ✅ Check security
+
+    if not os.path.exists(file):
+        raise HTTPException(status_code=404, detail=f"File not found: {file}")
+
+    # ✅ Run Prettier formatting
+    subprocess.run(["npx", "prettier@3.4.2", "--write", file], check=True)
+
+    return {"status": "success", "formatted_file": file}
 
 @app.post("/count-weekdays")
 def count_weekdays(input_file: str, weekday: str, output_file: str):
@@ -225,20 +255,45 @@ def convert_md_to_html():
         f.write(html_content)
     return {"status": "success"}
 
+@app.post("/extract-markdown-headers")
+def extract_markdown_headers(path: str):
+    secure_path(path)
+    with open(path, "r") as f:
+        md_content = f.read()
+    headers = re.findall(r"^(#{1,6})\s+(.+)", md_content, re.MULTILINE)
+    return {"headers": [{"level": len(h[0]), "text": h[1]} for h in headers]}
+
+@app.post("/extract-credit-card")
+def extract_credit_card():
+    with open("/data/transactions.txt") as f:
+        text = f.read()
+    matches = re.findall(r"\b\d{4}-\d{4}-\d{4}-\d{4}\b", text)
+    return {"credit_cards": matches}
+
+@app.post("/find-similar-comments")
+def find_similar_comments():
+    df = pd.read_csv("/data/comments.csv")
+    comments = df["comment"].tolist()
+    similarities = {}
+    for i, c1 in enumerate(comments):
+        for j, c2 in enumerate(comments):
+            if i != j and c1[:10] == c2[:10]:
+                similarities.setdefault(c1, []).append(c2)
+    return {"similar_comments": similarities}
+
 SAFE_FUNCTIONS = {
-    "install_and_run": install_and_run,
-    "format_markdown": format_markdown,
-    "count_weekdays": count_weekdays,
-    "sort_contacts": sort_contacts,
-    "extract_log_lines": extract_log_lines,
-    "extract_email": extract_email,
-    "calculate_sales": calculate_sales,
-    "fetch_api_data": fetch_api_data,
-    "clone_and_commit": clone_and_commit,
-    "run_sql": run_sql,
-    "scrape_website": scrape_website,
-    "convert_md_to_html": convert_md_to_html
+    "install_and_run": install_and_run, 
+    "format_file": format_file,  
+    "count_weekdays": count_weekdays,  
+    "sort_contacts": sort_contacts,  
+    "extract_log_lines": extract_log_lines,  
+    "extract_markdown_headers": extract_markdown_headers,  
+    "extract_email": extract_email,  
+    "extract_credit_card": extract_credit_card,  
+    "find_similar_comments": find_similar_comments,  
+    "calculate_sales": calculate_sales  
 }
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
